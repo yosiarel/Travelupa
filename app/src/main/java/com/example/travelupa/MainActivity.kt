@@ -36,10 +36,11 @@ import coil.request.ImageRequest
 import com.example.travelupa.ui.theme.TravelupaTheme
 import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 sealed class Screen(val route: String) {
@@ -51,10 +52,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         FirebaseApp.initializeApp(this)
+
+        val currentUser = FirebaseAuth.getInstance().currentUser
+
         setContent {
             TravelupaTheme {
                 Surface(color = Color.White, modifier = Modifier.fillMaxSize()) {
-                    AppNavigation()
+                    AppNavigation(currentUser = currentUser)
                 }
             }
         }
@@ -67,7 +71,6 @@ data class TempatWisata(
     val gambarUriString: String? = null,
     val gambarResId: Int? = null
 )
-
 @Composable
 fun GreetingScreen() {
     Box(
@@ -103,11 +106,9 @@ fun GreetingScreen() {
         }
     }
 }
-
 @Composable
-fun AppNavigation() {
+fun AppNavigation(currentUser: FirebaseUser?) {
     val navController = rememberNavController()
-    val currentUser = FirebaseAuth.getInstance().currentUser
     val startDestination = if (currentUser != null) Screen.RekomendasiTempat.route else Screen.Login.route
 
     NavHost(navController = navController, startDestination = startDestination) {
@@ -231,6 +232,16 @@ fun RekomendasiTempatScreen(onBackToLogin: () -> Unit) {
     }
 
     Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Travelupa") },
+                actions = {
+                    IconButton(onClick = onBackToLogin) {
+                        Icon(painter = painterResource(id = android.R.drawable.ic_lock_power_off), contentDescription = "Logout", tint = Color.White)
+                    }
+                }
+            )
+        },
         floatingActionButton = {
             FloatingActionButton(
                 onClick = { showTambahDialog = true },
@@ -253,6 +264,7 @@ fun RekomendasiTempatScreen(onBackToLogin: () -> Unit) {
                             firestore.collection("tempat_wisata").document(tempat.nama).delete()
                                 .addOnSuccessListener {
                                     daftarTempatWisata = daftarTempatWisata.filter { it.nama != tempat.nama }
+                                    Toast.makeText(context, "Data dihapus", Toast.LENGTH_SHORT).show()
                                 }
                         }
                     )
@@ -311,7 +323,7 @@ fun TempatItemEditable(tempat: TempatWisata, onDelete: () -> Unit) {
 
                 Box(modifier = Modifier.align(Alignment.TopEnd)) {
                     IconButton(onClick = { expanded = true }) {
-                        Icon(Icons.Filled.MoreVert, contentDescription = "Options")
+                        Icon(Icons.Filled.MoreVert, contentDescription = "Options", tint = Color.White)
                     }
                     DropdownMenu(
                         expanded = expanded,
