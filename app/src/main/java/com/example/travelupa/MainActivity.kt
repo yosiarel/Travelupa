@@ -1,5 +1,6 @@
 package com.example.travelupa
 
+import android.content.Context
 import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
@@ -25,14 +26,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.room.Room
 import coil.compose.rememberAsyncImagePainter
-import coil.request.ImageRequest
 import com.example.travelupa.ui.theme.TravelupaTheme
 import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
@@ -42,6 +42,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
 
 sealed class Screen(val route: String) {
     object Greeting : Screen("greeting")
@@ -54,12 +56,18 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         FirebaseApp.initializeApp(this)
 
+        val db = Room.databaseBuilder(
+            applicationContext,
+            AppDatabase::class.java, "travelupa-database"
+        ).build()
+
+        val imageDao = db.imageDao()
         val currentUser = FirebaseAuth.getInstance().currentUser
 
         setContent {
             TravelupaTheme {
                 Surface(color = Color.White, modifier = Modifier.fillMaxSize()) {
-                    AppNavigation(currentUser = currentUser)
+                    AppNavigation(currentUser = currentUser, imageDao = imageDao)
                 }
             }
         }
@@ -74,7 +82,7 @@ data class TempatWisata(
 )
 
 @Composable
-fun AppNavigation(currentUser: FirebaseUser?) {
+fun AppNavigation(currentUser: FirebaseUser?, imageDao: ImageDao) {
     val navController = rememberNavController()
     val startDestination = if (currentUser != null) Screen.RekomendasiTempat.route else Screen.Greeting.route
 
@@ -99,6 +107,7 @@ fun AppNavigation(currentUser: FirebaseUser?) {
         }
         composable(Screen.RekomendasiTempat.route) {
             RekomendasiTempatScreen(
+                imageDao = imageDao,
                 onBackToLogin = {
                     FirebaseAuth.getInstance().signOut()
                     navController.navigate(Screen.Greeting.route) {
@@ -118,29 +127,24 @@ fun GreetingScreen(onStart: () -> Unit) {
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp)
+            modifier = Modifier.fillMaxWidth().padding(16.dp)
         ) {
             Text(
                 text = "Selamat Datang di Travelupa!",
                 style = MaterialTheme.typography.h4,
-                textAlign = TextAlign.Center
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
             Spacer(modifier = Modifier.height(16.dp))
             Text(
                 text = "Solusi buat kamu yang lupa kemana-mana",
                 style = MaterialTheme.typography.h6,
-                textAlign = TextAlign.Center
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
         }
 
         Button(
             onClick = onStart,
-            modifier = Modifier
-                .width(360.dp)
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 16.dp)
+            modifier = Modifier.width(360.dp).align(Alignment.BottomCenter).padding(bottom = 16.dp)
         ) {
             Text(text = "Mulai")
         }
@@ -156,9 +160,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
     val coroutineScope = rememberCoroutineScope()
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
+        modifier = Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -167,10 +169,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
 
         OutlinedTextField(
             value = email,
-            onValueChange = {
-                email = it
-                errorMessage = null
-            },
+            onValueChange = { email = it; errorMessage = null },
             label = { Text("Email") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
@@ -179,10 +178,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
         Spacer(modifier = Modifier.height(8.dp))
         OutlinedTextField(
             value = password,
-            onValueChange = {
-                password = it
-                errorMessage = null
-            },
+            onValueChange = { password = it; errorMessage = null },
             label = { Text("Password") },
             singleLine = true,
             visualTransformation = PasswordVisualTransformation(),
@@ -215,24 +211,17 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
             modifier = Modifier.fillMaxWidth(),
             enabled = !isLoading
         ) {
-            if (isLoading) {
-                CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White)
-            } else {
-                Text("Login")
-            }
+            if (isLoading) CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White)
+            else Text("Login")
         }
         errorMessage?.let {
-            Text(
-                text = it,
-                color = Color.Red,
-                modifier = Modifier.padding(top = 8.dp)
-            )
+            Text(text = it, color = Color.Red, modifier = Modifier.padding(top = 8.dp))
         }
     }
 }
 
 @Composable
-fun RekomendasiTempatScreen(onBackToLogin: () -> Unit) {
+fun RekomendasiTempatScreen(onBackToLogin: () -> Unit, imageDao: ImageDao) {
     val firestore = FirebaseFirestore.getInstance()
     var daftarTempatWisata by remember { mutableStateOf(listOf<TempatWisata>()) }
     var showTambahDialog by remember { mutableStateOf(false) }
@@ -267,11 +256,7 @@ fun RekomendasiTempatScreen(onBackToLogin: () -> Unit) {
             }
         }
     ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .padding(paddingValues)
-                .padding(16.dp)
-        ) {
+        Column(modifier = Modifier.padding(paddingValues).padding(16.dp)) {
             LazyColumn {
                 items(daftarTempatWisata) { tempat ->
                     TempatItemEditable(
@@ -291,10 +276,10 @@ fun RekomendasiTempatScreen(onBackToLogin: () -> Unit) {
         if (showTambahDialog) {
             TambahTempatWisataDialog(
                 firestore = firestore,
+                imageDao = imageDao,
                 onDismiss = { showTambahDialog = false },
-                onTambah = { nama, deskripsi, gambarUri ->
-                    val uriString = gambarUri?.toString()
-                    val newPlace = TempatWisata(nama, deskripsi, uriString)
+                onTambah = { nama, deskripsi, localPath ->
+                    val newPlace = TempatWisata(nama, deskripsi, localPath)
                     daftarTempatWisata = daftarTempatWisata + newPlace
                     showTambahDialog = false
                 }
@@ -308,19 +293,13 @@ fun TempatItemEditable(tempat: TempatWisata, onDelete: () -> Unit) {
     var expanded by remember { mutableStateOf(false) }
 
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
         elevation = 4.dp,
         backgroundColor = MaterialTheme.colors.surface
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             val painter = if (tempat.gambarUriString != null) {
-                rememberAsyncImagePainter(
-                    ImageRequest.Builder(LocalContext.current)
-                        .data(Uri.parse(tempat.gambarUriString))
-                        .build()
-                )
+                rememberAsyncImagePainter(File(tempat.gambarUriString))
             } else if (tempat.gambarResId != null) {
                 painterResource(id = tempat.gambarResId)
             } else {
@@ -331,9 +310,7 @@ fun TempatItemEditable(tempat: TempatWisata, onDelete: () -> Unit) {
                 Image(
                     painter = painter,
                     contentDescription = tempat.nama,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(200.dp),
+                    modifier = Modifier.fillMaxWidth().height(200.dp),
                     contentScale = ContentScale.Crop
                 )
 
@@ -346,26 +323,15 @@ fun TempatItemEditable(tempat: TempatWisata, onDelete: () -> Unit) {
                         onDismissRequest = { expanded = false },
                         offset = DpOffset((-40).dp, 0.dp)
                     ) {
-                        DropdownMenuItem(onClick = {
-                            expanded = false
-                            onDelete()
-                        }) {
+                        DropdownMenuItem(onClick = { expanded = false; onDelete() }) {
                             Text("Delete")
                         }
                     }
                 }
             }
 
-            Text(
-                text = tempat.nama,
-                style = MaterialTheme.typography.h6,
-                modifier = Modifier.padding(bottom = 8.dp, top = 12.dp)
-            )
-            Text(
-                text = tempat.deskripsi,
-                style = MaterialTheme.typography.body2,
-                modifier = Modifier.padding(top = 4.dp)
-            )
+            Text(text = tempat.nama, style = MaterialTheme.typography.h6, modifier = Modifier.padding(bottom = 8.dp, top = 12.dp))
+            Text(text = tempat.deskripsi, style = MaterialTheme.typography.body2, modifier = Modifier.padding(top = 4.dp))
         }
     }
 }
@@ -373,63 +339,41 @@ fun TempatItemEditable(tempat: TempatWisata, onDelete: () -> Unit) {
 @Composable
 fun TambahTempatWisataDialog(
     firestore: FirebaseFirestore,
+    imageDao: ImageDao,
     onDismiss: () -> Unit,
-    onTambah: (String, String, Uri?) -> Unit
+    onTambah: (String, String, String?) -> Unit
 ) {
     var nama by remember { mutableStateOf("") }
     var deskripsi by remember { mutableStateOf("") }
     var gambarUri by remember { mutableStateOf<Uri?>(null) }
     var isUploading by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
 
     val gambarLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        gambarUri = uri
-    }
+    ) { uri: Uri? -> gambarUri = uri }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Tambah Tempat Wisata Baru") },
         text = {
             Column {
-                TextField(
-                    value = nama,
-                    onValueChange = { nama = it },
-                    label = { Text("Nama Tempat") },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !isUploading
-                )
+                TextField(value = nama, onValueChange = { nama = it }, label = { Text("Nama Tempat") }, modifier = Modifier.fillMaxWidth(), enabled = !isUploading)
                 Spacer(modifier = Modifier.height(8.dp))
-                TextField(
-                    value = deskripsi,
-                    onValueChange = { deskripsi = it },
-                    label = { Text("Deskripsi") },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !isUploading
-                )
+                TextField(value = deskripsi, onValueChange = { deskripsi = it }, label = { Text("Deskripsi") }, modifier = Modifier.fillMaxWidth(), enabled = !isUploading)
                 Spacer(modifier = Modifier.height(8.dp))
 
                 gambarUri?.let { uri ->
                     Image(
-                        painter = rememberAsyncImagePainter(
-                            model = ImageRequest.Builder(LocalContext.current)
-                                .data(uri)
-                                .build()
-                        ),
-                        contentDescription = "Gambar yang dipilih",
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(200.dp),
+                        painter = rememberAsyncImagePainter(uri),
+                        contentDescription = "Preview",
+                        modifier = Modifier.fillMaxWidth().height(200.dp),
                         contentScale = ContentScale.Crop
                     )
                 }
                 Spacer(modifier = Modifier.height(8.dp))
-                Button(
-                    onClick = { gambarLauncher.launch("image/*") },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !isUploading
-                ) {
+                Button(onClick = { gambarLauncher.launch("image/*") }, modifier = Modifier.fillMaxWidth(), enabled = !isUploading) {
                     Text("Pilih Gambar")
                 }
             }
@@ -437,40 +381,53 @@ fun TambahTempatWisataDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    if (nama.isNotBlank() && deskripsi.isNotBlank()) {
+                    if (nama.isNotBlank() && deskripsi.isNotBlank() && gambarUri != null) {
                         isUploading = true
-                        val uriString = gambarUri?.toString()
-                        val newPlace = TempatWisata(nama, deskripsi, uriString)
 
-                        firestore.collection("tempat_wisata").document(nama)
-                            .set(newPlace)
-                            .addOnSuccessListener {
+                        coroutineScope.launch {
+                            try {
+                                val localPath = saveImageLocally(context, gambarUri!!)
+                                imageDao.insert(ImageEntity(localPath = localPath, tempatWisataId = nama))
+
+                                val newPlace = TempatWisata(nama, deskripsi, localPath)
+
+                                firestore.collection("tempat_wisata").document(nama)
+                                    .set(newPlace)
+                                    .await()
+
                                 isUploading = false
-                                onTambah(nama, deskripsi, gambarUri)
-                            }
-                            .addOnFailureListener {
+                                onTambah(nama, deskripsi, localPath)
+                                Toast.makeText(context, "Berhasil disimpan", Toast.LENGTH_SHORT).show()
+                            } catch (e: Exception) {
                                 isUploading = false
-                                Toast.makeText(context, "Error saving data", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "Gagal: ${e.message}", Toast.LENGTH_SHORT).show()
                             }
+                        }
                     }
                 },
                 enabled = !isUploading
             ) {
-                if (isUploading) {
-                    CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White)
-                } else {
-                    Text("Tambah")
-                }
+                if (isUploading) CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White)
+                else Text("Tambah")
             }
         },
         dismissButton = {
-            Button(
-                onClick = onDismiss,
-                colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.surface),
-                enabled = !isUploading
-            ) {
+            Button(onClick = onDismiss, colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.surface), enabled = !isUploading) {
                 Text("Batal")
             }
         }
     )
+}
+
+fun saveImageLocally(context: Context, uri: Uri): String {
+    val inputStream = context.contentResolver.openInputStream(uri)
+    val file = File(context.filesDir, "image_${System.currentTimeMillis()}.jpg")
+    val outputStream = FileOutputStream(file)
+
+    inputStream?.use { input ->
+        outputStream.use { output ->
+            input.copyTo(output)
+        }
+    }
+    return file.absolutePath
 }
