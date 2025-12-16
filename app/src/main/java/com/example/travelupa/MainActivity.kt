@@ -1,21 +1,30 @@
 package com.example.travelupa
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.launch
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -26,6 +35,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.navigation.compose.NavHost
@@ -33,22 +43,26 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.room.Room
 import coil.compose.rememberAsyncImagePainter
+import coil.request.ImageRequest
 import com.example.travelupa.ui.theme.TravelupaTheme
 import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
+import java.util.UUID
 
 sealed class Screen(val route: String) {
     object Greeting : Screen("greeting")
     object Login : Screen("login")
     object RekomendasiTempat : Screen("rekomendasi_tempat")
+    object Gallery : Screen("gallery")
 }
 
 class MainActivity : ComponentActivity() {
@@ -113,7 +127,16 @@ fun AppNavigation(currentUser: FirebaseUser?, imageDao: ImageDao) {
                     navController.navigate(Screen.Greeting.route) {
                         popUpTo(Screen.RekomendasiTempat.route) { inclusive = true }
                     }
+                },
+                onGallerySelected = {
+                    navController.navigate(Screen.Gallery.route)
                 }
+            )
+        }
+        composable(Screen.Gallery.route) {
+            GalleryScreen(
+                imageDao = imageDao,
+                onBack = { navController.popBackStack() }
             )
         }
     }
@@ -132,13 +155,13 @@ fun GreetingScreen(onStart: () -> Unit) {
             Text(
                 text = "Selamat Datang di Travelupa!",
                 style = MaterialTheme.typography.h4,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                textAlign = TextAlign.Center
             )
             Spacer(modifier = Modifier.height(16.dp))
             Text(
                 text = "Solusi buat kamu yang lupa kemana-mana",
                 style = MaterialTheme.typography.h6,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                textAlign = TextAlign.Center
             )
         }
 
@@ -221,11 +244,17 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
 }
 
 @Composable
-fun RekomendasiTempatScreen(onBackToLogin: () -> Unit, imageDao: ImageDao) {
+fun RekomendasiTempatScreen(
+    onBackToLogin: () -> Unit,
+    onGallerySelected: () -> Unit,
+    imageDao: ImageDao
+) {
     val firestore = FirebaseFirestore.getInstance()
     var daftarTempatWisata by remember { mutableStateOf(listOf<TempatWisata>()) }
     var showTambahDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val coroutineScope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
         firestore.collection("tempat_wisata")
@@ -236,56 +265,262 @@ fun RekomendasiTempatScreen(onBackToLogin: () -> Unit, imageDao: ImageDao) {
             }
     }
 
+    ModalDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            Column {
+                Text(
+                    text = "Menu",
+                    style = MaterialTheme.typography.h6,
+                    modifier = Modifier.padding(16.dp)
+                )
+                Divider()
+                Text(
+                    text = "Gallery",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            coroutineScope.launch { drawerState.close() }
+                            onGallerySelected()
+                        }
+                        .padding(16.dp)
+                )
+                Text(
+                    text = "Logout",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            coroutineScope.launch {
+                                drawerState.close()
+                                onBackToLogin()
+                            }
+                        }
+                        .padding(16.dp)
+                )
+            }
+        }
+    ) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text("Travelupa") },
+                    navigationIcon = {
+                        IconButton(onClick = { coroutineScope.launch { drawerState.open() } }) {
+                            Icon(Icons.Filled.Menu, contentDescription = "Menu")
+                        }
+                    }
+                )
+            },
+            floatingActionButton = {
+                FloatingActionButton(
+                    onClick = { showTambahDialog = true },
+                    backgroundColor = MaterialTheme.colors.primary
+                ) {
+                    Icon(Icons.Filled.Add, contentDescription = "Tambah Tempat Wisata")
+                }
+            }
+        ) { paddingValues ->
+            Column(modifier = Modifier.padding(paddingValues).padding(16.dp)) {
+                LazyColumn {
+                    items(daftarTempatWisata) { tempat ->
+                        TempatItemEditable(
+                            tempat = tempat,
+                            onDelete = {
+                                firestore.collection("tempat_wisata").document(tempat.nama).delete()
+                                    .addOnSuccessListener {
+                                        daftarTempatWisata = daftarTempatWisata.filter { it.nama != tempat.nama }
+                                        Toast.makeText(context, "Data dihapus", Toast.LENGTH_SHORT).show()
+                                    }
+                            }
+                        )
+                    }
+                }
+            }
+
+            if (showTambahDialog) {
+                TambahTempatWisataDialog(
+                    firestore = firestore,
+                    imageDao = imageDao,
+                    onDismiss = { showTambahDialog = false },
+                    onTambah = { nama, deskripsi, localPath ->
+                        val newPlace = TempatWisata(nama, deskripsi, localPath)
+                        daftarTempatWisata = daftarTempatWisata + newPlace
+                        showTambahDialog = false
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun GalleryScreen(
+    imageDao: ImageDao,
+    onBack: () -> Unit
+) {
+    val images by imageDao.getAllImages().collectAsState(initial = emptyList())
+    var showAddImageDialog by remember { mutableStateOf(false) }
+    var selectedImageEntity by remember { mutableStateOf<ImageEntity?>(null) }
+    val context = LocalContext.current
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Travelupa") },
-                actions = {
-                    IconButton(onClick = onBackToLogin) {
-                        Icon(painter = painterResource(id = android.R.drawable.ic_lock_power_off), contentDescription = "Logout", tint = Color.White)
+                title = { Text("Gallery") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
                     }
                 }
             )
         },
         floatingActionButton = {
             FloatingActionButton(
-                onClick = { showTambahDialog = true },
+                onClick = { showAddImageDialog = true },
                 backgroundColor = MaterialTheme.colors.primary
             ) {
-                Icon(Icons.Filled.Add, contentDescription = "Tambah Tempat Wisata")
+                Icon(Icons.Filled.Add, contentDescription = "Add Image")
             }
         }
     ) { paddingValues ->
-        Column(modifier = Modifier.padding(paddingValues).padding(16.dp)) {
-            LazyColumn {
-                items(daftarTempatWisata) { tempat ->
-                    TempatItemEditable(
-                        tempat = tempat,
-                        onDelete = {
-                            firestore.collection("tempat_wisata").document(tempat.nama).delete()
-                                .addOnSuccessListener {
-                                    daftarTempatWisata = daftarTempatWisata.filter { it.nama != tempat.nama }
-                                    Toast.makeText(context, "Data dihapus", Toast.LENGTH_SHORT).show()
-                                }
-                        }
-                    )
-                }
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(3),
+            modifier = Modifier.padding(paddingValues)
+        ) {
+            items(images) { image ->
+                Image(
+                    painter = rememberAsyncImagePainter(model = image.localPath),
+                    contentDescription = null,
+                    modifier = Modifier
+                        .size(100.dp)
+                        .padding(4.dp)
+                        .clickable { selectedImageEntity = image },
+                    contentScale = ContentScale.Crop
+                )
             }
         }
 
-        if (showTambahDialog) {
-            TambahTempatWisataDialog(
-                firestore = firestore,
-                imageDao = imageDao,
-                onDismiss = { showTambahDialog = false },
-                onTambah = { nama, deskripsi, localPath ->
-                    val newPlace = TempatWisata(nama, deskripsi, localPath)
-                    daftarTempatWisata = daftarTempatWisata + newPlace
-                    showTambahDialog = false
+        if (showAddImageDialog) {
+            AddImageDialog(
+                onDismiss = { showAddImageDialog = false },
+                onImageAdded = { uri ->
+                    try {
+                        val localPath = saveImageLocally(context, uri)
+                        val newImage = ImageEntity(localPath = localPath)
+                        CoroutineScope(Dispatchers.IO).launch {
+                            imageDao.insert(newImage)
+                        }
+                        showAddImageDialog = false
+                    } catch (e: Exception) {
+                        Log.e("ImageSave", "Failed to save", e)
+                    }
+                }
+            )
+        }
+
+        selectedImageEntity?.let { imageEntity ->
+            ImageDetailDialog(
+                imageEntity = imageEntity,
+                onDismiss = { selectedImageEntity = null },
+                onDelete = { imageToDelete ->
+                    CoroutineScope(Dispatchers.IO).launch {
+                        imageDao.delete(imageToDelete)
+                        val file = File(imageToDelete.localPath)
+                        if (file.exists()) file.delete()
+                    }
+                    selectedImageEntity = null
                 }
             )
         }
     }
+}
+
+@Composable
+fun AddImageDialog(
+    onDismiss: () -> Unit,
+    onImageAdded: (Uri) -> Unit
+) {
+    var imageUri by remember { mutableStateOf<Uri?>(null) }
+    val context = LocalContext.current
+
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? -> imageUri = uri }
+
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicturePreview()
+    ) { bitmap ->
+        bitmap?.let {
+            val uri = saveBitmapToUri(context, it)
+            imageUri = uri
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add New Image") },
+        text = {
+            Column {
+                imageUri?.let { uri ->
+                    Image(
+                        painter = rememberAsyncImagePainter(model = uri),
+                        contentDescription = "Selected",
+                        modifier = Modifier.fillMaxWidth().height(200.dp),
+                        contentScale = ContentScale.Crop
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Button(
+                        onClick = { imagePickerLauncher.launch("image/*") },
+                        modifier = Modifier.weight(1f).padding(end = 4.dp)
+                    ) {
+                        Text("Gallery")
+                    }
+                    Button(
+                        onClick = { cameraLauncher.launch(null) },
+                        modifier = Modifier.weight(1f).padding(start = 4.dp)
+                    ) {
+                        Text("Camera")
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = { imageUri?.let { onImageAdded(it) } }) {
+                Text("Add")
+            }
+        },
+        dismissButton = {
+            Button(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+@Composable
+fun ImageDetailDialog(
+    imageEntity: ImageEntity,
+    onDismiss: () -> Unit,
+    onDelete: (ImageEntity) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        text = {
+            Image(
+                painter = rememberAsyncImagePainter(model = imageEntity.localPath),
+                contentDescription = "Detail",
+                modifier = Modifier.fillMaxWidth().aspectRatio(1f),
+                contentScale = ContentScale.Crop
+            )
+        },
+        confirmButton = {
+            Row {
+                Button(onClick = { onDelete(imageEntity) }) { Text("Delete") }
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(onClick = onDismiss) { Text("Close") }
+            }
+        }
+    )
 }
 
 @Composable
@@ -383,26 +618,20 @@ fun TambahTempatWisataDialog(
                 onClick = {
                     if (nama.isNotBlank() && deskripsi.isNotBlank() && gambarUri != null) {
                         isUploading = true
-
-                        coroutineScope.launch {
-                            try {
-                                val localPath = saveImageLocally(context, gambarUri!!)
-                                imageDao.insert(ImageEntity(localPath = localPath, tempatWisataId = nama))
-
-                                val newPlace = TempatWisata(nama, deskripsi, localPath)
-
-                                firestore.collection("tempat_wisata").document(nama)
-                                    .set(newPlace)
-                                    .await()
-
+                        uploadImageToFirestore(
+                            firestore = firestore,
+                            context = context,
+                            imageUri = gambarUri!!,
+                            tempatWisata = TempatWisata(nama, deskripsi),
+                            onSuccess = { uploadedTempat ->
                                 isUploading = false
-                                onTambah(nama, deskripsi, localPath)
-                                Toast.makeText(context, "Berhasil disimpan", Toast.LENGTH_SHORT).show()
-                            } catch (e: Exception) {
+                                onTambah(nama, deskripsi, uploadedTempat.gambarUriString)
+                            },
+                            onFailure = {
                                 isUploading = false
-                                Toast.makeText(context, "Gagal: ${e.message}", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "Gagal upload", Toast.LENGTH_SHORT).show()
                             }
-                        }
+                        )
                     }
                 },
                 enabled = !isUploading
@@ -419,6 +648,36 @@ fun TambahTempatWisataDialog(
     )
 }
 
+fun uploadImageToFirestore(
+    firestore: FirebaseFirestore,
+    context: Context,
+    imageUri: Uri,
+    tempatWisata: TempatWisata,
+    onSuccess: (TempatWisata) -> Unit,
+    onFailure: (Exception) -> Unit
+) {
+    val db = Room.databaseBuilder(
+        context,
+        AppDatabase::class.java, "travelupa-database"
+    ).build()
+    val imageDao = db.imageDao()
+
+    CoroutineScope(Dispatchers.IO).launch {
+        try {
+            val localPath = saveImageLocally(context, imageUri)
+            imageDao.insert(ImageEntity(localPath = localPath))
+            val updatedTempatWisata = tempatWisata.copy(gambarUriString = localPath)
+
+            firestore.collection("tempat_wisata").document(tempatWisata.nama)
+                .set(updatedTempatWisata)
+                .addOnSuccessListener { onSuccess(updatedTempatWisata) }
+                .addOnFailureListener { e -> onFailure(e) }
+        } catch (e: Exception) {
+            onFailure(e)
+        }
+    }
+}
+
 fun saveImageLocally(context: Context, uri: Uri): String {
     val inputStream = context.contentResolver.openInputStream(uri)
     val file = File(context.filesDir, "image_${System.currentTimeMillis()}.jpg")
@@ -430,4 +689,12 @@ fun saveImageLocally(context: Context, uri: Uri): String {
         }
     }
     return file.absolutePath
+}
+
+fun saveBitmapToUri(context: Context, bitmap: Bitmap): Uri {
+    val file = File(context.cacheDir, "${UUID.randomUUID()}.jpg")
+    val outputStream = FileOutputStream(file)
+    bitmap.compress(Bitmap.CompressFormat.JPEG, 100, outputStream)
+    outputStream.close()
+    return Uri.fromFile(file)
 }
