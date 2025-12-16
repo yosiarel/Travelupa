@@ -44,6 +44,7 @@ import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 
 sealed class Screen(val route: String) {
+    object Greeting : Screen("greeting")
     object Login : Screen("login")
     object RekomendasiTempat : Screen("rekomendasi_tempat")
 }
@@ -71,8 +72,46 @@ data class TempatWisata(
     val gambarUriString: String? = null,
     val gambarResId: Int? = null
 )
+
 @Composable
-fun GreetingScreen() {
+fun AppNavigation(currentUser: FirebaseUser?) {
+    val navController = rememberNavController()
+    val startDestination = if (currentUser != null) Screen.RekomendasiTempat.route else Screen.Greeting.route
+
+    NavHost(navController = navController, startDestination = startDestination) {
+        composable(Screen.Greeting.route) {
+            GreetingScreen(
+                onStart = {
+                    navController.navigate(Screen.Login.route) {
+                        popUpTo(Screen.Greeting.route) { inclusive = true }
+                    }
+                }
+            )
+        }
+        composable(Screen.Login.route) {
+            LoginScreen(
+                onLoginSuccess = {
+                    navController.navigate(Screen.RekomendasiTempat.route) {
+                        popUpTo(Screen.Login.route) { inclusive = true }
+                    }
+                }
+            )
+        }
+        composable(Screen.RekomendasiTempat.route) {
+            RekomendasiTempatScreen(
+                onBackToLogin = {
+                    FirebaseAuth.getInstance().signOut()
+                    navController.navigate(Screen.Greeting.route) {
+                        popUpTo(Screen.RekomendasiTempat.route) { inclusive = true }
+                    }
+                }
+            )
+        }
+    }
+}
+
+@Composable
+fun GreetingScreen(onStart: () -> Unit) {
     Box(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
@@ -95,41 +134,15 @@ fun GreetingScreen() {
                 textAlign = TextAlign.Center
             )
         }
+
         Button(
-            onClick = { /*TODO*/ },
+            onClick = onStart,
             modifier = Modifier
                 .width(360.dp)
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 16.dp)
         ) {
             Text(text = "Mulai")
-        }
-    }
-}
-@Composable
-fun AppNavigation(currentUser: FirebaseUser?) {
-    val navController = rememberNavController()
-    val startDestination = if (currentUser != null) Screen.RekomendasiTempat.route else Screen.Login.route
-
-    NavHost(navController = navController, startDestination = startDestination) {
-        composable(Screen.Login.route) {
-            LoginScreen(
-                onLoginSuccess = {
-                    navController.navigate(Screen.RekomendasiTempat.route) {
-                        popUpTo(Screen.Login.route) { inclusive = true }
-                    }
-                }
-            )
-        }
-        composable(Screen.RekomendasiTempat.route) {
-            RekomendasiTempatScreen(
-                onBackToLogin = {
-                    FirebaseAuth.getInstance().signOut()
-                    navController.navigate(Screen.Login.route) {
-                        popUpTo(Screen.RekomendasiTempat.route) { inclusive = true }
-                    }
-                }
-            )
         }
     }
 }
@@ -149,6 +162,9 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        Text(text = "Login", style = MaterialTheme.typography.h4)
+        Spacer(modifier = Modifier.height(32.dp))
+
         OutlinedTextField(
             value = email,
             onValueChange = {
